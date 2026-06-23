@@ -30,7 +30,7 @@ const getKeywordReply = (message) => {
   return null;
 };
 
-// ─── Claude AI chat (if ANTHROPIC_API_KEY is set) ─────────────────
+// ─── Hotel system prompt (shared) ────────────────────────────────
 const HOTEL_SYSTEM_PROMPT = `You are the AI concierge for Silver Key Hotel, a premium luxury hotel in Electronic City, Bengaluru, Karnataka, India.
 
 HOTEL DETAILS:
@@ -64,28 +64,38 @@ INSTRUCTIONS:
 - Respond in the same language as the user
 - Don't make up information not in this prompt`;
 
-const callClaudeAPI = async (messages) => {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
+// ─── Gemini AI (FREE — gemini-1.5-flash) ─────────────────────────
+const callGeminiAPI = async (messages) => {
+  if (!process.env.GEMINI_API_KEY) return null;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 400,
-        system: HOTEL_SYSTEM_PROMPT,
-        messages: messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content })),
-      }),
-    });
+    // Build Gemini contents array from message history
+    const contents = messages.map(m => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: m.content }],
+    }));
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: {
+            parts: [{ text: HOTEL_SYSTEM_PROMPT }],
+          },
+          contents,
+          generationConfig: {
+            maxOutputTokens: 400,
+            temperature: 0.7,
+          },
+        }),
+      }
+    );
 
     if (!response.ok) return null;
     const data = await response.json();
-    return data.content?.[0]?.text || null;
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (err) {
     return null;
   }
@@ -101,9 +111,9 @@ export const chat = async (req, res, next) => {
     const lastMsg = messages[messages.length - 1]?.content || '';
     let reply = null;
 
-    // Try Claude AI first
-    if (process.env.ANTHROPIC_API_KEY) {
-      reply = await callClaudeAPI(messages);
+    // Try Gemini AI first
+    if (process.env.GEMINI_API_KEY) {
+      reply = await callGeminiAPI(messages);
     }
 
     // Fallback to keyword matching
@@ -115,7 +125,7 @@ export const chat = async (req, res, next) => {
       success: true,
       message: reply,
       sessionId,
-      aiPowered: !!process.env.ANTHROPIC_API_KEY,
+      aiPowered: !!process.env.GEMINI_API_KEY,
       suggestions: ['Room prices', 'Check-in time', 'Amenities', 'Contact us'],
     });
   } catch (err) {
